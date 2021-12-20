@@ -2,6 +2,8 @@
 
 ** Need coco_ir folder **
 
+oscar -> run_retrieval.py
+
 (a) Train
 CUDA_VISIBLE_DEVICES=0 python run_retrieval.py \
 	--model_name_or_path /HDD/bpilseo/base-vg-labels/ep_67_588997 \

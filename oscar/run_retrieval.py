@@ -12,27 +12,24 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm
 
-from oscar.utils.tsv_file import TSVFile
-from oscar.utils.logger import setup_logger
-from oscar.utils.misc import mkdir, set_seed
-from oscar.modeling.modeling_bert import ImageBertForSequenceClassification
+from gatit.utils.tsv_file import TSVFile
+from gatit.utils.logger import setup_logger
+from gatit.utils.misc import mkdir, set_seed
+from gatit.modeling.modeling_bert_bi import ImageBertForSequenceClassification
 from transformers.pytorch_transformers import BertTokenizer, BertConfig 
 from transformers.pytorch_transformers import AdamW, WarmupLinearSchedule, WarmupConstantSchedule
 
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 class RetrievalDataset(Dataset):
     """ Image/Text Retrieval Dataset"""
     def __init__(self, tokenizer, args, split='train', is_train=True):
         """
         tokenizer: tokenizer to process caption text.
-        args: configuration parameters including max_seq_length, etc.
+        args: configureation parameters including max_seq_length, etc.
         split: used to infer the data used for training or testing. 
              All files are in .pt format of a dictionary with image keys and 
              image features (pytorch tensors), captions (list of str, support multiple
              captions per image), labels (list of dictionary or str of all labels),
-
         """
         super(RetrievalDataset, self).__init__()
         self.img_file = args.img_feat_file
@@ -53,10 +50,10 @@ class RetrievalDataset(Dataset):
             self.label_tsv = TSVFile(label_file)
             self.labels = {}
             for line_no in range(self.label_tsv.num_rows()):
-                row = self.label_tsv.seek(line_no) # 391895 {"image_h": 360 ~~~~~}
-                image_id = row[0] # 391895
+                row = self.label_tsv.seek(line_no)
+                image_id = row[0]
                 if int(image_id) in self.img_keys:
-                    results = json.loads(row[1])  # row[0] : image id,  # row[1] : detected position, class label
+                    results = json.loads(row[1])
                     objects = results['objects'] if type(
                         results) == dict else results
                     self.labels[int(image_id)] = {
@@ -133,7 +130,7 @@ class RetrievalDataset(Dataset):
                 od_labels = ' '.join(self.labels[img_key]['class'])
             return od_labels
 
-    def tensorize_example(self, text_a, img_feat, text_b=None, # text_b : od label
+    def tensorize_example(self, text_a, img_feat, text_b=None, 
             cls_token_segment_id=0, pad_token_segment_id=0,
             sequence_a_segment_id=0, sequence_b_segment_id=1):
         tokens_a = self.tokenizer.tokenize(text_a)
@@ -175,13 +172,11 @@ class RetrievalDataset(Dataset):
         else:
             # use 2D mask to represent the attention
             max_len = self.max_seq_len + self.max_img_seq_len
-            attention_mask = torch.zeros((max_len, max_len), dtype=torch.long) # len 120
+            attention_mask = torch.zeros((max_len, max_len), dtype=torch.long)
             # full attention of C-C, L-L, R-R
-            c_start, c_end = 0, seq_a_len # 0, 12
-            l_start, l_end = seq_a_len, seq_len # 12, 51
-            r_start, r_end = self.max_seq_len, self.max_seq_len + img_len # 70, 108
-
-            # full attention of C-C, L-L, R-R
+            c_start, c_end = 0, seq_a_len
+            l_start, l_end = seq_a_len, seq_len
+            r_start, r_end = self.max_seq_len, self.max_seq_len + img_len
             attention_mask[c_start : c_end, c_start : c_end] = 1
             attention_mask[l_start : l_end, l_start : l_end] = 1
             attention_mask[r_start : r_end, r_start : r_end] = 1
@@ -353,7 +348,7 @@ def train(args, train_dataset, val_dataset, model, tokenizer):
         model = torch.nn.DataParallel(model)
 
     logger.info("***** Running training *****")
-    logger.info("  Num examples = %d", len(train_dataset)) # len(train_dataset) = 113,287 (# images) * 5 (# captions) = 566,435
+    logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Num Epochs = %d", args.num_train_epochs)
     logger.info("  Batch size per GPU = %d", args.per_gpu_train_batch_size)
     logger.info("  Total train batch size (w. parallel, & accumulation) = %d",
@@ -361,18 +356,18 @@ def train(args, train_dataset, val_dataset, model, tokenizer):
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("  Total optimization steps = %d", t_total)
 
-    global_step, global_loss, global_acc = 0, 0.0, 0.0
+    global_step, global_loss, global_acc =0,  0.0, 0.0
     model.zero_grad()
     log_json = []
     best_score = 0
-    for epoch in range(int(args.num_train_epochs)):
-        for step, (_, batch) in enumerate(train_dataloader): # batch_size = 32, len(train_dataloader) = 17702, total dataset # = 566435
+    for epoch in tqdm(range(int(args.num_train_epochs))):
+        for step, (_, batch) in enumerate(tqdm(train_dataloader)):
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {
                 'input_ids':      torch.cat((batch[0], batch[5]), dim=0),
                 'attention_mask': torch.cat((batch[1], batch[6]), dim=0),
-                'token_type_ids': torch.cat((batch[2], batch[7]), dim=0), 
+                'token_type_ids': torch.cat((batch[2], batch[7]), dim=0),
                 'img_feats':      torch.cat((batch[3], batch[8]), dim=0),
                 'labels':         torch.cat((batch[4], batch[9]), dim=0)
             }
@@ -495,15 +490,13 @@ def restore_training_settings(args):
     return args
 
 
-################ MAIN ##################
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", default='/HDD/bpilseo/coco_ir', type=str, required=False,
                         help="The input data dir with all required files.")
     parser.add_argument("--img_feat_file", default='/HDD/bpilseo/coco_ir/features.tsv', type=str, required=False,
                         help="The absolute address of the image feature file.")
-    parser.add_argument("--model_name_or_path", default='/HDD/bpilseo/base-vg-labels/ep_67_588997', type=str, required=False,
+    parser.add_argument("--model_name_or_path", default=None, type=str, required=False,
                         help="Path to pre-trained model or model type. required for training.")
     parser.add_argument("--output_dir", default='output/', type=str, required=False,
                         help="The output directory to save checkpoint and test results.")
@@ -519,7 +512,7 @@ def main():
                              "sequences shorter will be padded."
                              "This number is calculated on COCO dataset" 
                              "If add object detection labels, the suggested length should be 70.")
-    parser.add_argument("--do_train", default='True', action='store_true', help="Whether to run training.")
+    parser.add_argument("--do_train", action='store_true', help="Whether to run training.")
     parser.add_argument("--do_test", action='store_true', help="Whether to run inference.")
     parser.add_argument("--do_eval", action='store_true', help="Whether to run performance valuation."
                        "do not activate if we want to inference on dataset without gt labels.")
@@ -528,13 +521,13 @@ def main():
                         help="image key tsv to select a subset of images for evaluation. "
                         "This is useful in 5-folds evaluation. The topn index file is not " 
                         "needed in this case.")
-    parser.add_argument("--eval_caption_index_file", default='minival_caption_indexs_top20.pt', type=str, 
+    parser.add_argument("--eval_caption_index_file", default='', type=str, 
                         help="index of a list of (img_key, cap_idx) for each image."
                         "this is used to perform re-rank using hard negative samples."
                         "useful for validation set to monitor the performance during training.")
     parser.add_argument("--cross_image_eval", action='store_true', 
                         help="perform cross image inference, ie. each image with all texts from other images.")
-    parser.add_argument("--add_od_labels", default=True, action='store_true', 
+    parser.add_argument("--add_od_labels", default=False, action='store_true', 
                         help="Whether to add object detection labels or not.")
     parser.add_argument("--od_label_type", default='vg', type=str, 
                         help="label type, support vg, gt, oid")
@@ -543,12 +536,12 @@ def main():
                         "C: caption, L: labels, R: image regions; CLR is full attention by default."
                         "CL means attention between caption and labels."
                         "please pay attention to the order CLR, which is the default concat order.")
-    parser.add_argument("--do_lower_case", default='True',action='store_true', 
+    parser.add_argument("--do_lower_case", action='store_true', 
                         help="Set this flag if you are using an uncased model.")
     parser.add_argument("--drop_out", default=0.1, type=float, help="Drop out in BERT.")
     parser.add_argument("--max_img_seq_length", default=50, type=int, 
                         help="The maximum total input image sequence length.")
-    parser.add_argument("--img_feature_dim", default=2054, type=int,   # 2048 (region feature dim) + 6 (region position dim)
+    parser.add_argument("--img_feature_dim", default=2054, type=int, 
                         help="The Image Feature Dimension.")
     parser.add_argument("--img_feature_type", default='frcnn', type=str,
                         help="Image feature type.")
@@ -576,7 +569,7 @@ def main():
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup.")
     parser.add_argument("--scheduler", default='linear', type=str, help="constant or linear.")
-    parser.add_argument("--num_workers", default=0, type=int, help="Workers in dataloader.")
+    parser.add_argument("--num_workers", default=4, type=int, help="Workers in dataloader.")
     parser.add_argument("--num_train_epochs", default=20, type=int, 
                         help="Total number of training epochs to perform.")
     parser.add_argument("--max_steps", default=-1, type=int, 
@@ -584,7 +577,7 @@ def main():
     parser.add_argument('--logging_steps', type=int, default=20, help="Log every X steps.")
     parser.add_argument('--save_steps', type=int, default=-1, 
                         help="Save checkpoint every X steps. Will also perform evaluatin.")
-    parser.add_argument("--evaluate_during_training", default='True', action='store_true', 
+    parser.add_argument("--evaluate_during_training", action='store_true', 
                         help="Run evaluation during training at each save_steps.")
     parser.add_argument("--eval_model_dir", type=str, default='', 
                         help="Model directory for evaluation.")
@@ -602,7 +595,7 @@ def main():
     logger.warning("Device: %s, n_gpu: %s", args.device, args.n_gpu)
     logger.info('output_mode: {}, #Labels: {}'.format(args.output_mode, args.num_labels))
  
-    config_class, tokenizer_class = BertConfig, BertTokenizer # BertTokenizer -> 단어 토큰화
+    config_class, tokenizer_class = BertConfig, BertTokenizer
     model_class = ImageBertForSequenceClassification
     if args.do_train:
         config = config_class.from_pretrained(args.config_name if args.config_name else \
@@ -633,10 +626,7 @@ def main():
             val_dataset = RetrievalDataset(tokenizer, args, 'minival', is_train=False)
         else:
             val_dataset = None
-
-        ################# train #################
-
-        global_step, avg_loss = train(args, train_dataset, val_dataset, model, tokenizer) 
+        global_step, avg_loss = train(args, train_dataset, val_dataset, model, tokenizer)
         logger.info("Training done: total_step = %s, avg loss = %s", global_step, avg_loss)
 
     # inference and evaluation

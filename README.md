@@ -1,5 +1,7 @@
 # vlp_gat
 
+![fig2](https://user-images.githubusercontent.com/75057781/180788286-191514ea-25ef-4e07-9ee6-f45b9354b45c.png)
+
 ** Need coco_ir folder **
 
 oscar -> run_retrieval.py
